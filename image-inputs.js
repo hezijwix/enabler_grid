@@ -18,8 +18,17 @@ class ImageGridManager extends BaseGridManager {
         this.sequenceTimer = null;
         this.preloadedImages = new Map(); // For smooth playback
         
+        // Performance caching for heavy image processing modes
+        this.processedImageCache = new Map(); // Cache processed images by dataUrl + mode
+        this.processingDebounceTimer = null;
+        
+        // Pre-processed sequence system for heavy modes
+        this.processedSequences = new Map(); // Cache entire processed sequences by mode
+        this.isProcessingSequence = false;
+        
         this.setupImageUpload();
         this.setupImageSequence();
+        this.setupImageFitModeDropdown();
         this.setupGridControls();
         this.setupCanvasSizeControls();
         this.setupAnimationControls();
@@ -50,6 +59,8 @@ class ImageGridManager extends BaseGridManager {
             if (file) {
                 this.clearImageSequence(); // Clear sequence when single image is loaded
                 this.loadImageToAllCells(file, false);
+                // Ensure dropdown shows all options for single images
+                this.updateFitModeDropdown(false);
             }
             imageUpload.value = '';
         });
@@ -68,6 +79,67 @@ class ImageGridManager extends BaseGridManager {
             }
             folderUpload.value = '';
         });
+    }
+    
+    setupImageFitModeDropdown() {
+        const imageFitMode = document.getElementById('imageFitMode');
+        
+        // Store all possible options for restoration
+        this.allFitModeOptions = [
+            { value: 'fill', text: 'stretch' },
+            { value: 'contain', text: 'fit' },
+            { value: 'cover', text: 'fill' },
+            { value: 'debug-corners', text: 'corner stretch' },
+            { value: 'background', text: 'single stretch' },
+            { value: 'single-corner-stretch', text: 'pixel sorting' }
+        ];
+        
+        // Options allowed when sequence is active (hide corner stretch and pixel sorting)
+        this.sequenceFitModeOptions = [
+            { value: 'fill', text: 'stretch' },
+            { value: 'contain', text: 'fit' },
+            { value: 'cover', text: 'fill' },
+            { value: 'background', text: 'single stretch' }
+        ];
+        
+        // Set up change handler
+        imageFitMode.addEventListener('change', (e) => {
+            this.setImageFitMode(e.target.value);
+        });
+        
+        // Initialize with full options
+        this.updateFitModeDropdown(false);
+    }
+    
+    updateFitModeDropdown(hasSequence) {
+        const imageFitMode = document.getElementById('imageFitMode');
+        const currentValue = imageFitMode.value;
+        
+        // Clear existing options
+        imageFitMode.innerHTML = '';
+        
+        // Choose which options to show
+        const optionsToShow = hasSequence ? this.sequenceFitModeOptions : this.allFitModeOptions;
+        
+        // Add options
+        optionsToShow.forEach(option => {
+            const optionElement = document.createElement('option');
+            optionElement.value = option.value;
+            optionElement.textContent = option.text;
+            imageFitMode.appendChild(optionElement);
+        });
+        
+        // Try to maintain current selection if still available
+        if (optionsToShow.some(option => option.value === currentValue)) {
+            imageFitMode.value = currentValue;
+        } else {
+            // If current mode is not available, switch to first available option
+            imageFitMode.value = optionsToShow[0].value;
+            // Apply the new mode immediately
+            this.setImageFitMode(imageFitMode.value);
+        }
+        
+        console.log(`Fit mode dropdown updated for ${hasSequence ? 'sequence' : 'single image'} mode`);
     }
     
     setupDefaultContent() {
@@ -131,6 +203,13 @@ class ImageGridManager extends BaseGridManager {
     }
     
     loadImageFromDataUrl(dataUrl) {
+        // Clear cache when loading new image
+        if (dataUrl !== this.currentImageDataUrl) {
+            this.processedImageCache.clear();
+        }
+        
+        this.currentImageDataUrl = dataUrl;
+        
         const gridItems = document.querySelectorAll('#gridContainer .grid-item');
         
         gridItems.forEach(cellElement => {
@@ -353,6 +432,9 @@ class ImageGridManager extends BaseGridManager {
         this.showSequenceImage(0);
         this.startAutoPlay();
         
+        // Update dropdown to hide heavy processing modes during sequence playback
+        this.updateFitModeDropdown(true);
+        
         console.log(`Sequence loaded and auto-playing: ${this.imageSequence.length} frames at 30 FPS`);
     }
     
@@ -369,11 +451,59 @@ class ImageGridManager extends BaseGridManager {
         if (index >= 0 && index < this.imageSequence.length) {
             this.currentSequenceIndex = index;
             const imageData = this.imageSequence[index];
-            this.currentImageDataUrl = imageData.dataUrl;
-            this.isUsingDefaultImage = false;
             
-            // Use preloaded image for smooth display
-            this.loadImageFromDataUrl(imageData.dataUrl);
+            // For sequences, use simplified loading to avoid heavy processing on every frame
+            this.loadSequenceImageOptimized(imageData.dataUrl);
+        }
+    }
+    
+    loadSequenceImageOptimized(dataUrl) {
+        // Set current image without clearing cache (for sequence performance)
+        this.currentImageDataUrl = dataUrl;
+        this.isUsingDefaultImage = false;
+        
+        const currentFitMode = document.getElementById('imageFitMode').value;
+        
+        // For heavy modes during sequence playback, only apply if we haven't cached this exact frame + mode combo
+        if (['debug-corners', 'background', 'single-corner-stretch'].includes(currentFitMode)) {
+            // Create cache key for this specific frame
+            const gridDimensions = `${this.columnSizes.join(',')}_${this.rowSizes.join(',')}`;
+            const containerRect = this.gridContainer.getBoundingClientRect();
+            const cacheKey = `${dataUrl}_${currentFitMode}_${gridDimensions}_${Math.round(containerRect.width)}_${Math.round(containerRect.height)}`;
+            
+            // Only process if not cached, otherwise skip heavy processing during playback
+            if (this.processedImageCache.has(cacheKey)) {
+                this.applyCachedImageMode(currentFitMode, this.processedImageCache.get(cacheKey));
+                return;
+            }
+        }
+        
+        // For simple modes or uncached heavy modes, load normally  
+        const gridItems = document.querySelectorAll('#gridContainer .grid-item');
+        
+        gridItems.forEach(cellElement => {
+            const imageWrapper = cellElement.querySelector('.image-wrapper');
+            const cellLabel = cellElement.querySelector('.cell-label');
+            
+            const existingImg = imageWrapper.querySelector('img');
+            if (existingImg) {
+                existingImg.src = dataUrl; // Update existing image src for better performance
+            } else {
+                const img = document.createElement('img');
+                img.src = dataUrl;
+                img.alt = `Image in cell ${cellElement.getAttribute('data-cell')}`;
+                imageWrapper.appendChild(img);
+            }
+            cellLabel.classList.add('hidden');
+        });
+        
+        // Apply fit mode without heavy debouncing for cached results
+        if (['debug-corners', 'background', 'single-corner-stretch'].includes(currentFitMode)) {
+            // Skip heavy processing during rapid sequence playback
+            return;
+        } else {
+            // Apply simple fit modes immediately
+            this.setImageFitMode(currentFitMode);
         }
     }
     
@@ -418,54 +548,621 @@ class ImageGridManager extends BaseGridManager {
         this.preloadedImages.clear();
         this.currentSequenceIndex = 0;
         
+        // Clear processed sequences
+        this.processedSequences.clear();
+        this.currentProcessedSequence = null;
+        this.currentProcessedMode = null;
+        this.currentProcessedIndex = 0;
+        this.isProcessingSequence = false;
+        
         const sequenceInfo = document.getElementById('sequenceInfo');
         sequenceInfo.style.display = 'none';
         
+        // Restore full dropdown options when sequence is cleared
+        this.updateFitModeDropdown(false);
+        
         console.log('Image sequence cleared');
+    }
+    
+    // Async processing methods for heavy image modes
+    async processDebugCornersMode() {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const tempCanvas = document.createElement('canvas');
+                const ctx = tempCanvas.getContext('2d');
+                
+                tempCanvas.width = img.naturalWidth;
+                tempCanvas.height = img.naturalHeight;
+                ctx.drawImage(img, 0, 0);
+                
+                const quarterWidth = Math.floor(tempCanvas.width / 2);
+                const quarterHeight = Math.floor(tempCanvas.height / 2);
+                
+                const result = {
+                    mode: 'debug-corners',
+                    cornerSlices: {},
+                    edgeStretches: {},
+                    centerColor: null
+                };
+                
+                // Create corner slices
+                result.cornerSlices.topLeft = this.createSliceDataUrl(ctx, 0, 0, quarterWidth, quarterHeight);
+                result.cornerSlices.topRight = this.createSliceDataUrl(ctx, quarterWidth, 0, quarterWidth, quarterHeight);
+                result.cornerSlices.bottomLeft = this.createSliceDataUrl(ctx, 0, quarterHeight, quarterWidth, quarterHeight);
+                result.cornerSlices.bottomRight = this.createSliceDataUrl(ctx, quarterWidth, quarterHeight, quarterWidth, quarterHeight);
+                
+                // Create edge stretches
+                result.edgeStretches.left = this.createSliceDataUrl(ctx, 0, quarterHeight, quarterWidth, 1);
+                result.edgeStretches.right = this.createSliceDataUrl(ctx, quarterWidth, quarterHeight, quarterWidth, 1);
+                result.edgeStretches.top = this.createSliceDataUrl(ctx, quarterWidth - 1, 0, 1, quarterHeight);
+                result.edgeStretches.bottom = this.createSliceDataUrl(ctx, quarterWidth - 1, quarterHeight, 1, quarterHeight);
+                
+                // Get center color
+                const centerPixelData = ctx.getImageData(quarterWidth, quarterHeight, 1, 1);
+                const pixel = centerPixelData.data;
+                result.centerColor = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+                
+                resolve(result);
+            };
+            img.src = this.currentImageDataUrl;
+        });
+    }
+    
+    async processBackgroundMode() {
+        return new Promise((resolve) => {
+            const tempImg = new Image();
+            tempImg.onload = () => {
+                const sourceCanvas = document.createElement('canvas');
+                const sourceCtx = sourceCanvas.getContext('2d');
+                
+                const containerRect = this.gridContainer.getBoundingClientRect();
+                const containerWidth = containerRect.width - 4;
+                const containerHeight = containerRect.height - 4;
+                
+                sourceCanvas.width = containerWidth;
+                sourceCanvas.height = containerHeight;
+                sourceCtx.drawImage(tempImg, 0, 0, containerWidth, containerHeight);
+                
+                // Calculate grid positions
+                const totalColumnFr = this.columnSizes.reduce((sum, size) => sum + size, 0);
+                const totalRowFr = this.rowSizes.reduce((sum, size) => sum + size, 0);
+                
+                let colPositions = [0];
+                let currentColPos = 0;
+                for (let i = 0; i < this.columnSizes.length; i++) {
+                    currentColPos += (this.columnSizes[i] / totalColumnFr) * containerWidth;
+                    colPositions.push(currentColPos);
+                }
+                
+                let rowPositions = [0];
+                let currentRowPos = 0;
+                for (let i = 0; i < this.rowSizes.length; i++) {
+                    currentRowPos += (this.rowSizes[i] / totalRowFr) * containerHeight;
+                    rowPositions.push(currentRowPos);
+                }
+                
+                const result = {
+                    mode: 'background',
+                    slices: []
+                };
+                
+                // Create slices for each cell
+                const totalCells = this.columnSizes.length * this.rowSizes.length;
+                for (let cellNumber = 1; cellNumber <= totalCells; cellNumber++) {
+                    const col = (cellNumber - 1) % this.columnSizes.length;
+                    const row = Math.floor((cellNumber - 1) / this.columnSizes.length);
+                    
+                    const left = Math.round(colPositions[col]);
+                    const right = Math.round(colPositions[col + 1]);
+                    const top = Math.round(rowPositions[row]);
+                    const bottom = Math.round(rowPositions[row + 1]);
+                    
+                    const sliceWidth = right - left;
+                    const sliceHeight = bottom - top;
+                    
+                    const sliceDataUrl = this.createSliceFromCanvas(sourceCtx, left, top, sliceWidth, sliceHeight);
+                    
+                    result.slices.push({
+                        cellNumber: cellNumber,
+                        dataUrl: sliceDataUrl
+                    });
+                }
+                
+                resolve(result);
+            };
+            tempImg.src = this.currentImageDataUrl;
+        });
+    }
+    
+    async processSingleCornerStretchMode() {
+        // First get the background slices
+        const backgroundResult = await this.processBackgroundMode();
+        
+        // Then apply corner stretch to each slice
+        const result = {
+            mode: 'single-corner-stretch',
+            processedSlices: []
+        };
+        
+        for (let slice of backgroundResult.slices) {
+            const processedSlice = await this.applyCornerStretchToDataUrl(slice.dataUrl);
+            result.processedSlices.push({
+                cellNumber: slice.cellNumber,
+                dataUrl: processedSlice
+            });
+        }
+        
+        return result;
+    }
+    
+    createSliceDataUrl(ctx, x, y, width, height) {
+        const canvas = document.createElement('canvas');
+        const canvasCtx = canvas.getContext('2d');
+        canvas.width = width;
+        canvas.height = height;
+        
+        const imageData = ctx.getImageData(x, y, width, height);
+        canvasCtx.putImageData(imageData, 0, 0);
+        
+        return canvas.toDataURL();
+    }
+    
+    createSliceFromCanvas(sourceCtx, left, top, width, height) {
+        const sliceCanvas = document.createElement('canvas');
+        const sliceCtx = sliceCanvas.getContext('2d');
+        sliceCanvas.width = width;
+        sliceCanvas.height = height;
+        
+        const imageData = sourceCtx.getImageData(left, top, width, height);
+        sliceCtx.putImageData(imageData, 0, 0);
+        
+        return sliceCanvas.toDataURL();
+    }
+    
+    async applyCornerStretchToDataUrl(dataUrl) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                
+                // Draw original image first
+                ctx.drawImage(img, 0, 0);
+                
+                // Apply corner stretch effect
+                // Get the top-left corner pixel
+                const cornerPixelData = ctx.getImageData(0, 0, 1, 1);
+                const cornerPixel = cornerPixelData.data;
+                const cornerColor = `rgb(${cornerPixel[0]}, ${cornerPixel[1]}, ${cornerPixel[2]})`;
+                
+                // Create a gradient from corner color to the image
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const data = imageData.data;
+                
+                // Apply corner stretch effect - blend corner color with original image
+                for (let y = 0; y < canvas.height; y++) {
+                    for (let x = 0; x < canvas.width; x++) {
+                        const index = (y * canvas.width + x) * 4;
+                        
+                        // Calculate distance from corner (0,0)
+                        const distance = Math.sqrt(x * x + y * y);
+                        const maxDistance = Math.sqrt(canvas.width * canvas.width + canvas.height * canvas.height);
+                        const blendFactor = Math.min(distance / maxDistance, 1.0);
+                        
+                        // Blend corner color with original pixel based on distance
+                        data[index] = cornerPixel[0] * (1 - blendFactor) + data[index] * blendFactor;     // Red
+                        data[index + 1] = cornerPixel[1] * (1 - blendFactor) + data[index + 1] * blendFactor; // Green
+                        data[index + 2] = cornerPixel[2] * (1 - blendFactor) + data[index + 2] * blendFactor; // Blue
+                        // Alpha stays the same
+                    }
+                }
+                
+                // Put the modified image data back
+                ctx.putImageData(imageData, 0, 0);
+                
+                resolve(canvas.toDataURL());
+            };
+            img.src = dataUrl;
+        });
+    }
+    
+    applyCachedImageMode(mode, cachedResult) {
+        switch(mode) {
+            case 'debug-corners':
+                this.applyDebugCornersResult(cachedResult);
+                break;
+            case 'background':
+                this.applyBackgroundResult(cachedResult);
+                break;
+            case 'single-corner-stretch':
+                this.applySingleCornerStretchResult(cachedResult);
+                break;
+        }
+    }
+    
+    applyDebugCornersResult(result) {
+        const imageWrappers = document.querySelectorAll('#gridContainer .image-wrapper');
+        imageWrappers.forEach(wrapper => {
+            wrapper.classList.add('debug-corners');
+            
+            // Create corner slices
+            this.createCachedCornerSlice(wrapper, result.cornerSlices.topLeft, 'top-left');
+            this.createCachedCornerSlice(wrapper, result.cornerSlices.topRight, 'top-right');
+            this.createCachedCornerSlice(wrapper, result.cornerSlices.bottomLeft, 'bottom-left');
+            this.createCachedCornerSlice(wrapper, result.cornerSlices.bottomRight, 'bottom-right');
+            
+            // Create edge stretches
+            this.createCachedEdgeStretch(wrapper, result.edgeStretches.left, 'left', 'vertical');
+            this.createCachedEdgeStretch(wrapper, result.edgeStretches.right, 'right', 'vertical');
+            this.createCachedEdgeStretch(wrapper, result.edgeStretches.top, 'top', 'horizontal');
+            this.createCachedEdgeStretch(wrapper, result.edgeStretches.bottom, 'bottom', 'horizontal');
+            
+            // Create center area
+            this.createCachedCenterArea(wrapper, result.centerColor);
+        });
+    }
+    
+    applyBackgroundResult(result) {
+        // Hide original images and show sliced versions
+        const imageWrappers = document.querySelectorAll('#gridContainer .image-wrapper');
+        
+        result.slices.forEach(slice => {
+            const cellElement = document.querySelector(`[data-cell="${slice.cellNumber}"]`);
+            if (cellElement) {
+                const wrapper = cellElement.querySelector('.image-wrapper');
+                wrapper.innerHTML = '';
+                
+                const sliceImg = document.createElement('img');
+                sliceImg.src = slice.dataUrl;
+                sliceImg.style.width = '100%';
+                sliceImg.style.height = '100%';
+                sliceImg.style.display = 'block';
+                
+                wrapper.appendChild(sliceImg);
+            }
+        });
+        
+        // Hide cell labels
+        const cellLabels = document.querySelectorAll('#gridContainer .cell-label');
+        cellLabels.forEach(label => {
+            label.classList.add('hidden');
+        });
+    }
+    
+    applySingleCornerStretchResult(result) {
+        // Apply the processed slices
+        const imageWrappers = document.querySelectorAll('#gridContainer .image-wrapper');
+        
+        result.processedSlices.forEach(slice => {
+            const cellElement = document.querySelector(`[data-cell="${slice.cellNumber}"]`);
+            if (cellElement) {
+                const wrapper = cellElement.querySelector('.image-wrapper');
+                wrapper.innerHTML = '';
+                
+                const sliceImg = document.createElement('img');
+                sliceImg.src = slice.dataUrl;
+                sliceImg.style.width = '100%';
+                sliceImg.style.height = '100%';
+                sliceImg.style.display = 'block';
+                
+                wrapper.appendChild(sliceImg);
+            }
+        });
+        
+        // Hide cell labels
+        const cellLabels = document.querySelectorAll('#gridContainer .cell-label');
+        cellLabels.forEach(label => {
+            label.classList.add('hidden');
+        });
+    }
+    
+    createCachedCornerSlice(wrapper, dataUrl, position) {
+        const div = document.createElement('div');
+        div.className = `debug-corner-slice ${position}`;
+        div.style.backgroundImage = `url("${dataUrl}")`;
+        wrapper.appendChild(div);
+    }
+    
+    createCachedEdgeStretch(wrapper, dataUrl, position, direction) {
+        const div = document.createElement('div');
+        div.className = `debug-${direction}-stretch ${position}-stretch`;
+        div.style.position = 'absolute';
+        div.style.backgroundImage = `url("${dataUrl}")`;
+        div.style.backgroundRepeat = direction === 'vertical' ? 'repeat-y' : 'repeat-x';
+        div.style.zIndex = '10';
+        
+        // Position the stretch elements
+        if (direction === 'vertical') {
+            div.style[position] = '0px';
+            div.style.top = '50px';
+            div.style.width = '50px';
+            div.style.height = 'calc(100% - 100px)';
+            div.style.backgroundSize = '50px 1px';
+        } else {
+            div.style[position] = '0px';
+            div.style.left = '50px';
+            div.style.width = 'calc(100% - 100px)';
+            div.style.height = '50px';
+            div.style.backgroundSize = '1px 50px';
+        }
+        
+        wrapper.appendChild(div);
+    }
+    
+    createCachedCenterArea(wrapper, centerColor) {
+        const centerDiv = document.createElement('div');
+        centerDiv.className = 'debug-center-area';
+        centerDiv.style.position = 'absolute';
+        centerDiv.style.left = '50px';
+        centerDiv.style.top = '50px';
+        centerDiv.style.width = 'calc(100% - 100px)';
+        centerDiv.style.height = 'calc(100% - 100px)';
+        centerDiv.style.backgroundColor = centerColor;
+        centerDiv.style.zIndex = '5';
+        
+        wrapper.appendChild(centerDiv);
+    }
+    
+    async preProcessImageSequence(mode) {
+        if (this.isProcessingSequence) {
+            console.log('Already processing sequence');
+            return;
+        }
+        
+        // Create sequence key for caching
+        const gridDimensions = `${this.columnSizes.join(',')}_${this.rowSizes.join(',')}`;
+        const containerRect = this.gridContainer.getBoundingClientRect();
+        const sequenceKey = `${mode}_${gridDimensions}_${Math.round(containerRect.width)}_${Math.round(containerRect.height)}_${this.imageSequence.length}`;
+        
+        // Check if we already have this processed sequence
+        if (this.processedSequences.has(sequenceKey)) {
+            console.log(`Using cached processed sequence for ${mode}`);
+            this.useProcessedSequence(mode, this.processedSequences.get(sequenceKey));
+            return;
+        }
+        
+        this.isProcessingSequence = true;
+        this.stopAutoPlay(); // Stop current playback
+        
+        const sequenceStatus = document.getElementById('sequenceStatus');
+        const originalStatusText = sequenceStatus.textContent;
+        
+        try {
+            sequenceStatus.textContent = `Processing ${mode} mode: 0/${this.imageSequence.length} frames...`;
+            
+            const processedSequence = [];
+            
+            // Process each frame in the sequence
+            for (let i = 0; i < this.imageSequence.length; i++) {
+                const frame = this.imageSequence[i];
+                sequenceStatus.textContent = `Processing ${mode} mode: ${i + 1}/${this.imageSequence.length} frames...`;
+                
+                // Set current image temporarily for processing
+                const oldImageDataUrl = this.currentImageDataUrl;
+                this.currentImageDataUrl = frame.dataUrl;
+                
+                let processedResult = null;
+                
+                switch(mode) {
+                    case 'debug-corners':
+                        processedResult = await this.processDebugCornersMode();
+                        break;
+                    case 'background':
+                        processedResult = await this.processBackgroundMode();
+                        break;
+                    case 'single-corner-stretch':
+                        processedResult = await this.processSingleCornerStretchMode();
+                        break;
+                }
+                
+                if (processedResult) {
+                    processedSequence.push({
+                        originalFrame: frame,
+                        processedResult: processedResult,
+                        frameIndex: i
+                    });
+                }
+                
+                // Restore original current image
+                this.currentImageDataUrl = oldImageDataUrl;
+                
+                // Small delay to prevent blocking UI
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            
+            // Cache the processed sequence
+            this.processedSequences.set(sequenceKey, processedSequence);
+            
+            // Start using the processed sequence
+            this.useProcessedSequence(mode, processedSequence);
+            
+            sequenceStatus.textContent = `${this.imageSequence.length} frames • Playing processed ${mode} at 30 FPS`;
+            console.log(`Sequence pre-processing complete for ${mode} mode`);
+            
+        } catch (error) {
+            console.error('Error processing sequence:', error);
+            sequenceStatus.textContent = originalStatusText;
+            // Fallback to original sequence
+            this.startAutoPlay();
+        } finally {
+            this.isProcessingSequence = false;
+        }
+    }
+    
+    useProcessedSequence(mode, processedSequence) {
+        this.currentProcessedSequence = processedSequence;
+        this.currentProcessedMode = mode;
+        this.currentProcessedIndex = 0;
+        
+        // Show first processed frame
+        this.showProcessedFrame(0);
+        
+        // Start processed sequence playback
+        this.startProcessedSequencePlayback();
+    }
+    
+    showProcessedFrame(index) {
+        if (!this.currentProcessedSequence || index >= this.currentProcessedSequence.length) return;
+        
+        const processedFrame = this.currentProcessedSequence[index];
+        this.currentProcessedIndex = index;
+        
+        // Apply the processed result directly (no re-processing needed)
+        this.applyCachedImageMode(this.currentProcessedMode, processedFrame.processedResult);
+    }
+    
+    startProcessedSequencePlayback() {
+        this.stopAutoPlay(); // Stop any existing playback
+        
+        if (!this.currentProcessedSequence || this.currentProcessedSequence.length <= 1) return;
+        
+        // 30 FPS = 1000ms / 30 = 33.33ms per frame
+        const interval = 1000 / 30;
+        
+        this.sequenceTimer = setInterval(() => {
+            this.nextProcessedFrame();
+        }, interval);
+    }
+    
+    nextProcessedFrame() {
+        if (!this.currentProcessedSequence || this.currentProcessedSequence.length === 0) return;
+        
+        let nextIndex = this.currentProcessedIndex + 1;
+        
+        // Always loop infinitely
+        if (nextIndex >= this.currentProcessedSequence.length) {
+            nextIndex = 0;
+        }
+        
+        this.showProcessedFrame(nextIndex);
     }
     
     setImageFitMode(mode) {
         console.log('setImageFitMode called with mode:', mode);
         const imageWrappers = document.querySelectorAll('#gridContainer .image-wrapper');
         
+        // Clear previous states
         this.clearImageBackground();
-        
         imageWrappers.forEach(wrapper => {
             wrapper.classList.remove('fit-contain', 'fit-cover', 'debug-corners');
             this.clearDebugElements(wrapper);
         });
         
-        switch(mode) {
-            case 'fill':
-                console.log('Image fit mode: Stretch to Fill Cell');
-                break;
-            case 'contain':
-                imageWrappers.forEach(wrapper => {
-                    wrapper.classList.add('fit-contain');
-                });
-                console.log('Image fit mode: Fit Within Cell');
-                break;
-            case 'cover':
-                imageWrappers.forEach(wrapper => {
-                    wrapper.classList.add('fit-cover');
-                });
-                console.log('Image fit mode: Fill Cell Completely');
-                break;
-            case 'debug-corners':
-                imageWrappers.forEach(wrapper => {
-                    this.setupDebugCorners(wrapper);
-                });
-                console.log('Image fit mode: Debug 4 Corners');
-                break;
-            case 'background':
-                this.setupImageBackground();
-                console.log('Image fit mode: Single Image Background');
-                break;
-            case 'single-corner-stretch':
-                this.setupSingleCornerStretch();
-                console.log('Image fit mode: Single Corner Stretch');
-                break;
+        // Handle simple modes immediately
+        const isSimpleMode = ['fill', 'contain', 'cover'].includes(mode);
+        
+        if (isSimpleMode) {
+            // If switching from processed sequence back to simple mode, revert to original sequence
+            if (this.currentProcessedSequence && this.imageSequence.length > 1) {
+                this.currentProcessedSequence = null;
+                this.currentProcessedMode = null;
+                this.startAutoPlay(); // Resume original sequence playback
+            }
+            
+            switch(mode) {
+                case 'fill':
+                    console.log('Image fit mode: Stretch to Fill Cell');
+                    return;
+                case 'contain':
+                    imageWrappers.forEach(wrapper => {
+                        wrapper.classList.add('fit-contain');
+                    });
+                    console.log('Image fit mode: Fit Within Cell');
+                    return;
+                case 'cover':
+                    imageWrappers.forEach(wrapper => {
+                        wrapper.classList.add('fit-cover');
+                    });
+                    console.log('Image fit mode: Fill Cell Completely');
+                    return;
+            }
         }
+        
+        // Handle heavy processing modes with caching and debouncing
+        this.setHeavyImageFitMode(mode);
+    }
+    
+    setHeavyImageFitMode(mode) {
+        if (!this.currentImageDataUrl) return;
+        
+        // If we have an active image sequence, pre-process the entire sequence
+        if (this.imageSequence.length > 1) {
+            this.preProcessImageSequence(mode);
+            return;
+        }
+        
+        // For single images, use the existing cache system
+        const gridDimensions = `${this.columnSizes.join(',')}_${this.rowSizes.join(',')}`;
+        const containerRect = this.gridContainer.getBoundingClientRect();
+        const cacheKey = `${this.currentImageDataUrl}_${mode}_${gridDimensions}_${Math.round(containerRect.width)}_${Math.round(containerRect.height)}`;
+        
+        // Check if we have cached result
+        if (this.processedImageCache.has(cacheKey)) {
+            console.log(`Using cached result for ${mode}`);
+            this.applyCachedImageMode(mode, this.processedImageCache.get(cacheKey));
+            return;
+        }
+        
+        // Debounce heavy processing to prevent flickering during rapid changes
+        if (this.processingDebounceTimer) {
+            clearTimeout(this.processingDebounceTimer);
+        }
+        
+        // Show loading state for heavy modes
+        this.showProcessingState(mode);
+        
+        this.processingDebounceTimer = setTimeout(() => {
+            this.processHeavyImageMode(mode, cacheKey);
+        }, 100); // 100ms debounce
+    }
+    
+    showProcessingState(mode) {
+        const imageWrappers = document.querySelectorAll('#gridContainer .image-wrapper');
+        imageWrappers.forEach(wrapper => {
+            wrapper.style.opacity = '0.7';
+        });
+        console.log(`Processing ${mode} mode...`);
+    }
+    
+    async processHeavyImageMode(mode, cacheKey) {
+        try {
+            let result = null;
+            
+            switch(mode) {
+                case 'debug-corners':
+                    result = await this.processDebugCornersMode();
+                    break;
+                case 'background':
+                    result = await this.processBackgroundMode();
+                    break;
+                case 'single-corner-stretch':
+                    result = await this.processSingleCornerStretchMode();
+                    break;
+            }
+            
+            if (result) {
+                // Cache the result
+                this.processedImageCache.set(cacheKey, result);
+                
+                // Apply the result
+                this.applyCachedImageMode(mode, result);
+                console.log(`${mode} mode processed and cached`);
+            }
+            
+        } catch (error) {
+            console.error(`Error processing ${mode} mode:`, error);
+            // Fallback to basic mode
+            this.setImageFitMode('fill');
+        }
+        
+        // Remove loading state
+        const imageWrappers = document.querySelectorAll('#gridContainer .image-wrapper');
+        imageWrappers.forEach(wrapper => {
+            wrapper.style.opacity = '1';
+        });
     }
     
     setupDebugCorners(wrapper) {
@@ -883,9 +1580,7 @@ class ImageGridManager extends BaseGridManager {
             this.clearAllImages();
         });
         
-        imageFitModeSelect.addEventListener('change', (e) => {
-            this.setImageFitMode(e.target.value);
-        });
+        // Note: imageFitMode change handler is set up in setupImageFitModeDropdown()
         
         showSplittersCheckbox.addEventListener('change', (e) => {
             this.toggleSplitterVisibility(e.target.checked);
@@ -1038,6 +1733,9 @@ class ImageGridManager extends BaseGridManager {
     }
     
     updateGridStructure() {
+        // Clear image processing cache when grid structure changes
+        this.processedImageCache.clear();
+        
         const currentFitMode = document.getElementById('imageFitMode').value;
         
         document.documentElement.style.setProperty('--grid-columns', this.columnSizes.length);

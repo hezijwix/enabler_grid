@@ -344,18 +344,18 @@ class BaseGridManager {
         
         // Animate columns (X-axis) if axis is 'x' or 'xy'
         if (animationAxis === 'x' || animationAxis === 'xy') {
-            const totalColumnFr = this.baseColumnSizes.reduce((sum, size) => sum + size, 0);
-            const minColumnSizeFr = minPercentagePerCellWidth * totalColumnFr;
+        const totalColumnFr = this.baseColumnSizes.reduce((sum, size) => sum + size, 0);
+        const minColumnSizeFr = minPercentagePerCellWidth * totalColumnFr;
+        
+        for (let i = 0; i < this.columnSizes.length; i++) {
+            const phase = (i * 2.3) + this.animationTime;
+            const noise = this.smoothNoise(phase);
+            const variation = noise * this.amplitude;
             
-            for (let i = 0; i < this.columnSizes.length; i++) {
-                const phase = (i * 2.3) + this.animationTime;
-                const noise = this.smoothNoise(phase);
-                const variation = noise * this.amplitude;
-                
-                let newSize = this.baseColumnSizes[i] * (1 + variation);
-                newSize = Math.max(minColumnSizeFr, newSize);
-                
-                this.columnSizes[i] = newSize;
+            let newSize = this.baseColumnSizes[i] * (1 + variation);
+            newSize = Math.max(minColumnSizeFr, newSize);
+            
+            this.columnSizes[i] = newSize;
             }
         } else {
             // Reset columns to base sizes when not animating X
@@ -364,18 +364,18 @@ class BaseGridManager {
         
         // Animate rows (Y-axis) if axis is 'y' or 'xy'
         if (animationAxis === 'y' || animationAxis === 'xy') {
-            const totalRowFr = this.baseRowSizes.reduce((sum, size) => sum + size, 0);
-            const minRowSizeFr = minPercentagePerCellHeight * totalRowFr;
+        const totalRowFr = this.baseRowSizes.reduce((sum, size) => sum + size, 0);
+        const minRowSizeFr = minPercentagePerCellHeight * totalRowFr;
+        
+        for (let i = 0; i < this.rowSizes.length; i++) {
+            const phase = (i * 1.7) + this.animationTime + 100;
+            const noise = this.smoothNoise(phase);
+            const variation = noise * this.amplitude;
             
-            for (let i = 0; i < this.rowSizes.length; i++) {
-                const phase = (i * 1.7) + this.animationTime + 100;
-                const noise = this.smoothNoise(phase);
-                const variation = noise * this.amplitude;
-                
-                let newSize = this.baseRowSizes[i] * (1 + variation);
-                newSize = Math.max(minRowSizeFr, newSize);
-                
-                this.rowSizes[i] = newSize;
+            let newSize = this.baseRowSizes[i] * (1 + variation);
+            newSize = Math.max(minRowSizeFr, newSize);
+            
+            this.rowSizes[i] = newSize;
             }
         } else {
             // Reset rows to base sizes when not animating Y
