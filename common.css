@@ -758,6 +758,24 @@ body.dragging .splitter.dragging {
     border: none !important;
 }
 
+/* Sequence Info */
+.sequence-info {
+    margin-top: 16px;
+    padding: 12px;
+    background-color: rgba(255, 255, 255, 0.01);
+    border-radius: 2px;
+    border: 1px solid var(--border-color-subtle);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+#sequenceStatus {
+    display: block;
+    font-size: 9px;
+    color: var(--text-color-light);
+    text-align: center;
+}
+
 /* Export Controls */
 .export-controls {
     margin-bottom: 24px;

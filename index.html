@@ -28,9 +28,18 @@
                 </div>
                 <div class="upload-section">
                     <input type="file" id="imageUpload" accept="image/*" style="display: none;">
+                    <input type="file" id="folderUpload" webkitdirectory multiple style="display: none;">
+                    
                     <button class="upload-btn" onclick="document.getElementById('imageUpload').click()">
                         Choose Image
                     </button>
+                    <button class="upload-btn" onclick="document.getElementById('folderUpload').click()">
+                        Choose Folder
+                    </button>
+                    
+                    <div class="sequence-info" id="sequenceInfo" style="display: none;">
+                        <span id="sequenceStatus">No sequence loaded</span>
+                    </div>
                     
                     <label for="imageFitMode" class="dropdown-label">Image Fit Mode:</label>
                     <select id="imageFitMode" class="dropdown-select">

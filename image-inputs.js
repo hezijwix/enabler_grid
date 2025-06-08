@@ -12,7 +12,14 @@ class ImageGridManager extends BaseGridManager {
         this.recordedChunks = [];
         this.isRecording = false;
         
+        // Image sequence properties
+        this.imageSequence = [];
+        this.currentSequenceIndex = 0;
+        this.sequenceTimer = null;
+        this.preloadedImages = new Map(); // For smooth playback
+        
         this.setupImageUpload();
+        this.setupImageSequence();
         this.setupGridControls();
         this.setupCanvasSizeControls();
         this.setupAnimationControls();
@@ -41,9 +48,25 @@ class ImageGridManager extends BaseGridManager {
         imageUpload.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) {
+                this.clearImageSequence(); // Clear sequence when single image is loaded
                 this.loadImageToAllCells(file, false);
             }
             imageUpload.value = '';
+        });
+    }
+    
+    setupImageSequence() {
+        const folderUpload = document.getElementById('folderUpload');
+        
+        // Folder upload handler
+        folderUpload.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files).filter(file => 
+                file.type.startsWith('image/')
+            );
+            if (files.length > 0) {
+                this.detectAndLoadSequences(files);
+            }
+            folderUpload.value = '';
         });
     }
     
@@ -165,7 +188,240 @@ class ImageGridManager extends BaseGridManager {
         this.currentImageDataUrl = null;
         this.isUsingDefaultImage = false;
         
+        // Clear image sequence
+        this.clearImageSequence();
+        
         console.log('All images cleared - returned to empty grid');
+    }
+    
+    // Image Sequence Methods
+    async detectAndLoadSequences(files) {
+        this.clearImageSequence();
+        
+        // Show loading state
+        const sequenceStatus = document.getElementById('sequenceStatus');
+        sequenceStatus.textContent = `Analyzing ${files.length} images...`;
+        
+        try {
+            // Group files by detected sequences
+            const sequences = this.detectSequencePatterns(files);
+            
+            if (sequences.length === 0) {
+                sequenceStatus.textContent = 'No sequences detected';
+                return;
+            }
+            
+            // Use the longest sequence (most likely the main one)
+            const mainSequence = sequences.reduce((longest, current) => 
+                current.files.length > longest.files.length ? current : longest
+            );
+            
+            sequenceStatus.textContent = `Loading sequence: ${mainSequence.pattern} (${mainSequence.files.length} frames)`;
+            
+            // Load and preload the sequence
+            await this.loadImageSequence(mainSequence.files);
+            
+        } catch (error) {
+            console.error('Error detecting sequences:', error);
+            sequenceStatus.textContent = 'Error loading sequence';
+        }
+    }
+    
+    detectSequencePatterns(files) {
+        const sequences = [];
+        const processedFiles = new Set();
+        
+        files.forEach(file => {
+            if (processedFiles.has(file.name)) return;
+            
+            const pattern = this.extractSequencePattern(file.name);
+            if (!pattern) return;
+            
+            // Find all files matching this pattern
+            const matchingFiles = files.filter(f => {
+                const filePattern = this.extractSequencePattern(f.name);
+                return filePattern && 
+                       filePattern.prefix === pattern.prefix && 
+                       filePattern.suffix === pattern.suffix &&
+                       filePattern.digits === pattern.digits;
+            });
+            
+            if (matchingFiles.length > 1) {
+                // Sort by sequence number
+                matchingFiles.sort((a, b) => {
+                    const aNum = this.extractSequenceNumber(a.name);
+                    const bNum = this.extractSequenceNumber(b.name);
+                    return aNum - bNum;
+                });
+                
+                sequences.push({
+                    pattern: pattern.prefix + pattern.numberFormat + pattern.suffix,
+                    files: matchingFiles
+                });
+                
+                // Mark all files as processed
+                matchingFiles.forEach(f => processedFiles.add(f.name));
+            }
+        });
+        
+        return sequences;
+    }
+    
+    extractSequencePattern(filename) {
+        // Patterns to match: name_001.jpg, name001.jpg, 0001.jpg, etc.
+        const patterns = [
+            /^(.+?)_(\d{2,4})(\.[^.]+)$/,  // name_001.jpg
+            /^(.+?)(\d{2,4})(\.[^.]+)$/,   // name001.jpg  
+            /^(\d{2,4})(\.[^.]+)$/         // 0001.jpg
+        ];
+        
+        for (let pattern of patterns) {
+            const match = filename.match(pattern);
+            if (match) {
+                if (pattern.source.includes('^(\\d')) {
+                    // Pattern like 0001.jpg
+                    return {
+                        prefix: '',
+                        digits: match[1].length,
+                        suffix: match[2],
+                        numberFormat: '0'.repeat(match[1].length)
+                    };
+                } else {
+                    // Patterns like name_001.jpg or name001.jpg
+                    return {
+                        prefix: match[1] + (filename.includes('_') ? '_' : ''),
+                        digits: match[2].length,
+                        suffix: match[3],
+                        numberFormat: '0'.repeat(match[2].length)
+                    };
+                }
+            }
+        }
+        return null;
+    }
+    
+    extractSequenceNumber(filename) {
+        const patterns = [
+            /(\d{2,4})(?:\.[^.]+)?$/  // Extract number from end
+        ];
+        
+        for (let pattern of patterns) {
+            const match = filename.match(pattern);
+            if (match) {
+                return parseInt(match[1], 10);
+            }
+        }
+        return 0;
+    }
+    
+    async loadImageSequence(files) {
+        this.imageSequence = [];
+        this.preloadedImages.clear();
+        this.currentSequenceIndex = 0;
+        
+        // Preload all images for smooth playback
+        const sequenceStatus = document.getElementById('sequenceStatus');
+        
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            sequenceStatus.textContent = `Preloading ${i + 1}/${files.length}: ${file.name}`;
+            
+            // Create image element for smooth rendering
+            const img = new Image();
+            const dataUrl = await this.fileToDataUrl(file);
+            
+            await new Promise((resolve) => {
+                img.onload = resolve;
+                img.src = dataUrl;
+            });
+            
+            this.imageSequence.push({
+                name: file.name,
+                image: img,
+                dataUrl: dataUrl
+            });
+            
+            this.preloadedImages.set(i, img);
+        }
+        
+        // Show sequence info and start auto-play
+        const sequenceInfo = document.getElementById('sequenceInfo');
+        sequenceInfo.style.display = 'block';
+        sequenceStatus.textContent = `${this.imageSequence.length} frames • Playing at 30 FPS`;
+        
+        // Load first frame and start auto-play
+        this.showSequenceImage(0);
+        this.startAutoPlay();
+        
+        console.log(`Sequence loaded and auto-playing: ${this.imageSequence.length} frames at 30 FPS`);
+    }
+    
+    fileToDataUrl(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
+    
+    showSequenceImage(index) {
+        if (index >= 0 && index < this.imageSequence.length) {
+            this.currentSequenceIndex = index;
+            const imageData = this.imageSequence[index];
+            this.currentImageDataUrl = imageData.dataUrl;
+            this.isUsingDefaultImage = false;
+            
+            // Use preloaded image for smooth display
+            this.loadImageFromDataUrl(imageData.dataUrl);
+        }
+    }
+    
+    startAutoPlay() {
+        this.stopAutoPlay(); // Clear any existing timer
+        
+        if (this.imageSequence.length <= 1) return;
+        
+        // 30 FPS = 1000ms / 30 = 33.33ms per frame
+        const interval = 1000 / 30;
+        
+        this.sequenceTimer = setInterval(() => {
+            this.nextSequenceImage();
+        }, interval);
+    }
+    
+    stopAutoPlay() {
+        if (this.sequenceTimer) {
+            clearInterval(this.sequenceTimer);
+            this.sequenceTimer = null;
+        }
+    }
+    
+    nextSequenceImage() {
+        if (this.imageSequence.length === 0) return;
+        
+        let nextIndex = this.currentSequenceIndex + 1;
+        
+        // Always loop infinitely
+        if (nextIndex >= this.imageSequence.length) {
+            nextIndex = 0;
+        }
+        
+        this.showSequenceImage(nextIndex);
+    }
+    
+
+    
+    clearImageSequence() {
+        this.stopAutoPlay();
+        this.imageSequence = [];
+        this.preloadedImages.clear();
+        this.currentSequenceIndex = 0;
+        
+        const sequenceInfo = document.getElementById('sequenceInfo');
+        sequenceInfo.style.display = 'none';
+        
+        console.log('Image sequence cleared');
     }
     
     setImageFitMode(mode) {
