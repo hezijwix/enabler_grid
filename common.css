@@ -446,6 +446,7 @@ body.dragging .splitter.dragging {
     overflow: hidden;
 }
 
+/* Common animation control row styling */
 .animation-control-row {
     display: flex;
     align-items: center;
@@ -455,6 +456,7 @@ body.dragging .splitter.dragging {
     box-sizing: border-box;
 }
 
+/* Common animation control label styling */
 .animation-control-row label {
     min-width: 70px;
     font-size: 10px;
@@ -787,7 +789,19 @@ body.dragging .splitter.dragging {
     opacity: 0.6;
 }
 
-#frequencyValue, #amplitudeValue, #webglFrequencyValue, #webglAmplitudeValue {
+/* Common animation slider value styling */
+.animation-slider-value {
+    min-width: 30px;
+    text-align: center;
+    font-size: 10px;
+    color: var(--text-color);
+    font-weight: 400;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    flex-shrink: 0;
+}
+
+/* Legacy selectors for backward compatibility */
+#frequencyValue, #amplitudeValue, #holdValue, #webglFrequencyValue, #webglAmplitudeValue {
     min-width: 30px;
     text-align: center;
     font-size: 10px;
