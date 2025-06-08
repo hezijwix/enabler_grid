@@ -73,6 +73,17 @@
                             <label for="animationToggle">Animate Grid:</label>
                             <input type="checkbox" id="animationToggle" class="toggle-switch">
                         </div>
+                        <div class="animation-controls-row">
+                            <div class="animation-type-group">
+                                <button class="type-btn active" data-type="noise">NOISE</button>
+                                <button class="type-btn" data-type="pulse">PULSE</button>
+                            </div>
+                            <div class="animation-axis-group">
+                                <button class="axis-btn active" data-axis="xy">XY</button>
+                                <button class="axis-btn" data-axis="x">X</button>
+                                <button class="axis-btn" data-axis="y">Y</button>
+                            </div>
+                        </div>
                         <div class="animation-control-row">
                             <label for="frequencySlider">Frequency:</label>
                             <input type="range" id="frequencySlider" min="0.1" max="2" step="0.1" value="0.5" class="control-slider">
@@ -82,6 +93,11 @@
                             <label for="amplitudeSlider">Amplitude:</label>
                             <input type="range" id="amplitudeSlider" min="0.1" max="1" step="0.1" value="0.3" class="control-slider">
                             <span id="amplitudeValue">0.3</span>
+                        </div>
+                        <div class="animation-control-row" id="holdControlRow" style="display: none;">
+                            <label for="holdSlider">Hold:</label>
+                            <input type="range" id="holdSlider" min="0.1" max="2" step="0.1" value="0.5" class="control-slider">
+                            <span id="holdValue">0.5</span>
                         </div>
                     </div>
                     

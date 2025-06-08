@@ -664,6 +664,7 @@ class ImageGridManager extends BaseGridManager {
         const amplitudeSlider = document.getElementById('amplitudeSlider');
         const frequencyValue = document.getElementById('frequencyValue');
         const amplitudeValue = document.getElementById('amplitudeValue');
+
         
         animationToggle.addEventListener('change', (e) => {
             this.toggleAnimation(e.target.checked);
@@ -678,6 +679,61 @@ class ImageGridManager extends BaseGridManager {
             this.amplitude = parseFloat(e.target.value);
             amplitudeValue.textContent = this.amplitude;
         });
+        
+        // Animation axis controls
+        const axisButtons = document.querySelectorAll('.axis-btn');
+        axisButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                // Remove active class from all buttons
+                axisButtons.forEach(btn => btn.classList.remove('active'));
+                // Add active class to clicked button
+                e.target.classList.add('active');
+                // Set animation axis
+                this.animationAxis = e.target.getAttribute('data-axis');
+                console.log(`Animation axis set to: ${this.animationAxis.toUpperCase()}`);
+            });
+        });
+        
+        // Initialize animation axis from active button
+        const activeAxis = document.querySelector('.axis-btn.active');
+        this.animationAxis = activeAxis ? activeAxis.getAttribute('data-axis') : 'xy';
+        
+        // Animation type controls (noise/pulse)
+        const typeButtons = document.querySelectorAll('.type-btn');
+        const holdControlRow = document.getElementById('holdControlRow');
+        const holdSlider = document.getElementById('holdSlider');
+        const holdValue = document.getElementById('holdValue');
+        
+        typeButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                // Remove active class from all buttons
+                typeButtons.forEach(btn => btn.classList.remove('active'));
+                // Add active class to clicked button
+                e.target.classList.add('active');
+                // Set animation type
+                this.animationType = e.target.getAttribute('data-type');
+                
+                // Show/hide hold control based on type
+                if (this.animationType === 'pulse') {
+                    holdControlRow.style.display = 'flex';
+                } else {
+                    holdControlRow.style.display = 'none';
+                }
+                
+                console.log(`Animation type set to: ${this.animationType.toUpperCase()}`);
+            });
+        });
+        
+        // Hold slider control
+        holdSlider.addEventListener('input', (e) => {
+            this.holdTime = parseFloat(e.target.value);
+            holdValue.textContent = this.holdTime;
+        });
+        
+        // Initialize animation type and hold time
+        const activeType = document.querySelector('.type-btn.active');
+        this.animationType = activeType ? activeType.getAttribute('data-type') : 'noise';
+        this.holdTime = parseFloat(holdSlider.value);
     }
     
     addColumn() {

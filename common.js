@@ -14,8 +14,20 @@ class BaseGridManager {
         this.animationTime = 0;
         this.frequency = 0.5;
         this.amplitude = 0.3;
+        this.animationAxis = 'xy'; // Default to both X and Y animation
+        this.animationType = 'noise'; // 'noise' or 'pulse'
+        this.holdTime = 0.5;
         this.baseColumnSizes = [...this.columnSizes];
         this.baseRowSizes = [...this.rowSizes];
+        
+        // Pulse animation properties
+        this.pulseState = 'transitioning'; // 'transitioning' or 'holding'
+        this.pulseTimer = 0;
+        this.pulseStartColumns = [...this.columnSizes]; // Where we start each pulse from
+        this.pulseStartRows = [...this.rowSizes];
+        this.pulseTargetColumns = [...this.columnSizes]; // Where we're going to
+        this.pulseTargetRows = [...this.rowSizes];
+        this.pulseProgress = 0;
         
         this.init();
     }
@@ -261,6 +273,17 @@ class BaseGridManager {
             this.baseColumnSizes = [...this.columnSizes];
             this.baseRowSizes = [...this.rowSizes];
             this.animationTime = 0;
+            
+            // Initialize pulse animation state
+            if (this.animationType === 'pulse') {
+                this.pulseState = 'transitioning';
+                this.pulseTimer = 0;
+                this.pulseProgress = 0;
+                this.pulseStartColumns = [...this.baseColumnSizes];
+                this.pulseStartRows = [...this.baseRowSizes];
+                this.generateNewPulseTargets();
+            }
+            
             this.startAnimation();
         } else {
             this.stopAnimation();
@@ -291,6 +314,20 @@ class BaseGridManager {
     updateAnimation() {
         if (!this.isAnimating) return;
         
+        const animationType = this.animationType || 'noise';
+        
+        if (animationType === 'noise') {
+            this.updateNoiseAnimation();
+        } else if (animationType === 'pulse') {
+            this.updatePulseAnimation();
+        }
+        
+        this.updateGridColumns();
+        this.updateGridRows();
+        this.updateSplitterPositions();
+    }
+    
+    updateNoiseAnimation() {
         this.animationTime += 0.016 * this.frequency;
         
         const containerRect = this.gridContainer.getBoundingClientRect();
@@ -302,39 +339,218 @@ class BaseGridManager {
         const minPercentagePerCellWidth = minCellWidth / containerWidth;
         const minPercentagePerCellHeight = minCellHeight / containerHeight;
         
-        // Animate columns
-        const totalColumnFr = this.baseColumnSizes.reduce((sum, size) => sum + size, 0);
-        const minColumnSizeFr = minPercentagePerCellWidth * totalColumnFr;
+        // Get animation axis preference (defaults to 'xy' if not set)
+        const animationAxis = this.animationAxis || 'xy';
         
-        for (let i = 0; i < this.columnSizes.length; i++) {
-            const phase = (i * 2.3) + this.animationTime;
-            const noise = this.smoothNoise(phase);
-            const variation = noise * this.amplitude;
+        // Animate columns (X-axis) if axis is 'x' or 'xy'
+        if (animationAxis === 'x' || animationAxis === 'xy') {
+            const totalColumnFr = this.baseColumnSizes.reduce((sum, size) => sum + size, 0);
+            const minColumnSizeFr = minPercentagePerCellWidth * totalColumnFr;
             
-            let newSize = this.baseColumnSizes[i] * (1 + variation);
-            newSize = Math.max(minColumnSizeFr, newSize);
-            
-            this.columnSizes[i] = newSize;
+            for (let i = 0; i < this.columnSizes.length; i++) {
+                const phase = (i * 2.3) + this.animationTime;
+                const noise = this.smoothNoise(phase);
+                const variation = noise * this.amplitude;
+                
+                let newSize = this.baseColumnSizes[i] * (1 + variation);
+                newSize = Math.max(minColumnSizeFr, newSize);
+                
+                this.columnSizes[i] = newSize;
+            }
+        } else {
+            // Reset columns to base sizes when not animating X
+            this.columnSizes = [...this.baseColumnSizes];
         }
         
-        // Animate rows
-        const totalRowFr = this.baseRowSizes.reduce((sum, size) => sum + size, 0);
-        const minRowSizeFr = minPercentagePerCellHeight * totalRowFr;
+        // Animate rows (Y-axis) if axis is 'y' or 'xy'
+        if (animationAxis === 'y' || animationAxis === 'xy') {
+            const totalRowFr = this.baseRowSizes.reduce((sum, size) => sum + size, 0);
+            const minRowSizeFr = minPercentagePerCellHeight * totalRowFr;
+            
+            for (let i = 0; i < this.rowSizes.length; i++) {
+                const phase = (i * 1.7) + this.animationTime + 100;
+                const noise = this.smoothNoise(phase);
+                const variation = noise * this.amplitude;
+                
+                let newSize = this.baseRowSizes[i] * (1 + variation);
+                newSize = Math.max(minRowSizeFr, newSize);
+                
+                this.rowSizes[i] = newSize;
+            }
+        } else {
+            // Reset rows to base sizes when not animating Y
+            this.rowSizes = [...this.baseRowSizes];
+        }
+    }
+    
+    updatePulseAnimation() {
+        const deltaTime = 0.016; // 60fps
+        this.pulseTimer += deltaTime;
         
-        for (let i = 0; i < this.rowSizes.length; i++) {
-            const phase = (i * 1.7) + this.animationTime + 100;
-            const noise = this.smoothNoise(phase);
-            const variation = noise * this.amplitude;
+        const containerRect = this.gridContainer.getBoundingClientRect();
+        const borderWidth = parseInt(getComputedStyle(this.gridContainer).borderLeftWidth) || 0;
+        const containerWidth = containerRect.width - 2 * borderWidth;
+        const containerHeight = containerRect.height - 2 * borderWidth;
+        const minCellWidth = 100;
+        const minCellHeight = 100;
+        const minPercentagePerCellWidth = minCellWidth / containerWidth;
+        const minPercentagePerCellHeight = minCellHeight / containerHeight;
+        
+        const animationAxis = this.animationAxis || 'xy';
+        const transitionDuration = 1 / this.frequency; // Frequency controls transition speed
+        
+        if (this.pulseState === 'transitioning') {
+            // Calculate progress (0 to 1) with precise clamping
+            this.pulseProgress = Math.min(this.pulseTimer / transitionDuration, 1);
             
-            let newSize = this.baseRowSizes[i] * (1 + variation);
-            newSize = Math.max(minRowSizeFr, newSize);
+            // Smooth easing function - ensure it's exactly 0 or 1 at extremes
+            let easedProgress = this.easeInOutCubic(this.pulseProgress);
+            if (this.pulseProgress >= 1) easedProgress = 1;
+            if (this.pulseProgress <= 0) easedProgress = 0;
             
-            this.rowSizes[i] = newSize;
+            // Interpolate directly between start and target positions
+            if (animationAxis === 'x' || animationAxis === 'xy') {
+                const totalColumnFr = this.baseColumnSizes.reduce((sum, size) => sum + size, 0);
+                const minColumnSizeFr = minPercentagePerCellWidth * totalColumnFr;
+                
+                for (let i = 0; i < this.columnSizes.length; i++) {
+                    const interpolated = this.lerp(this.pulseStartColumns[i], this.pulseTargetColumns[i], easedProgress);
+                    this.columnSizes[i] = Math.max(minColumnSizeFr, interpolated);
+                }
+            } else {
+                this.columnSizes = [...this.baseColumnSizes];
+            }
+            
+            if (animationAxis === 'y' || animationAxis === 'xy') {
+                const totalRowFr = this.baseRowSizes.reduce((sum, size) => sum + size, 0);
+                const minRowSizeFr = minPercentagePerCellHeight * totalRowFr;
+                
+                for (let i = 0; i < this.rowSizes.length; i++) {
+                    const interpolated = this.lerp(this.pulseStartRows[i], this.pulseTargetRows[i], easedProgress);
+                    this.rowSizes[i] = Math.max(minRowSizeFr, interpolated);
+                }
+            } else {
+                this.rowSizes = [...this.baseRowSizes];
+            }
+            
+            // Check if transition is complete
+            if (this.pulseProgress >= 1) {
+                this.pulseState = 'holding';
+                this.pulseTimer = 0;
+                
+                // Ensure all elements are exactly at their target values
+                if (animationAxis === 'x' || animationAxis === 'xy') {
+                    const totalColumnFr = this.baseColumnSizes.reduce((sum, size) => sum + size, 0);
+                    const minColumnSizeFr = minPercentagePerCellWidth * totalColumnFr;
+                    
+                    for (let i = 0; i < this.columnSizes.length; i++) {
+                        this.columnSizes[i] = Math.max(minColumnSizeFr, this.pulseTargetColumns[i]);
+                    }
+                }
+                
+                if (animationAxis === 'y' || animationAxis === 'xy') {
+                    const totalRowFr = this.baseRowSizes.reduce((sum, size) => sum + size, 0);
+                    const minRowSizeFr = minPercentagePerCellHeight * totalRowFr;
+                    
+                    for (let i = 0; i < this.rowSizes.length; i++) {
+                        this.rowSizes[i] = Math.max(minRowSizeFr, this.pulseTargetRows[i]);
+                    }
+                }
+            }
+        } else if (this.pulseState === 'holding') {
+            // Hold the current state
+            if (this.pulseTimer >= this.holdTime) {
+                // Capture current positions as start positions for next pulse
+                this.pulseStartColumns = [...this.columnSizes];
+                this.pulseStartRows = [...this.rowSizes];
+                
+                // Generate new target positions BEFORE starting animation
+                this.generateNewPulseTargets();
+                
+                // Debug logging
+                console.log('Pulse transition starting:');
+                console.log('Start columns:', this.pulseStartColumns.map(x => x.toFixed(2)));
+                console.log('Target columns:', this.pulseTargetColumns.map(x => x.toFixed(2)));
+                
+                // Start new transition
+                this.pulseState = 'transitioning';
+                this.pulseTimer = 0;
+                this.pulseProgress = 0;
+            }
+        }
+    }
+    
+    generateNewPulseTargets() {
+        const animationAxis = this.animationAxis || 'xy';
+        
+        const containerRect = this.gridContainer.getBoundingClientRect();
+        const borderWidth = parseInt(getComputedStyle(this.gridContainer).borderLeftWidth) || 0;
+        const containerWidth = containerRect.width - 2 * borderWidth;
+        const containerHeight = containerRect.height - 2 * borderWidth;
+        const minCellWidth = 100;
+        const minCellHeight = 100;
+        const minPercentagePerCellWidth = minCellWidth / containerWidth;
+        const minPercentagePerCellHeight = minCellHeight / containerHeight;
+        
+        if (animationAxis === 'x' || animationAxis === 'xy') {
+            const totalColumnFr = this.baseColumnSizes.reduce((sum, size) => sum + size, 0);
+            const minColumnSizeFr = minPercentagePerCellWidth * totalColumnFr;
+            
+            for (let i = 0; i < this.columnSizes.length; i++) {
+                // Generate targets relative to CURRENT position, not base position
+                const currentSize = this.columnSizes[i];
+                const baseSize = this.baseColumnSizes[i];
+                
+                // Create a maximum movement distance based on amplitude
+                const maxMovement = baseSize * this.amplitude * 1.5; // Increase for more dramatic pulses
+                
+                // Generate a random direction and distance
+                const direction = (Math.random() - 0.5) * 2; // -1 to 1
+                const movement = direction * maxMovement;
+                
+                // Calculate target, ensuring it stays within bounds
+                let target = currentSize + movement;
+                target = Math.max(minColumnSizeFr, target);
+                target = Math.max(baseSize * 0.2, target); // Allow smaller sizes
+                target = Math.min(baseSize * 2.5, target); // Allow larger sizes
+                
+                this.pulseTargetColumns[i] = target;
+            }
         }
         
-        this.updateGridColumns();
-        this.updateGridRows();
-        this.updateSplitterPositions();
+        if (animationAxis === 'y' || animationAxis === 'xy') {
+            const totalRowFr = this.baseRowSizes.reduce((sum, size) => sum + size, 0);
+            const minRowSizeFr = minPercentagePerCellHeight * totalRowFr;
+            
+            for (let i = 0; i < this.rowSizes.length; i++) {
+                // Generate targets relative to CURRENT position, not base position
+                const currentSize = this.rowSizes[i];
+                const baseSize = this.baseRowSizes[i];
+                
+                // Create a maximum movement distance based on amplitude
+                const maxMovement = baseSize * this.amplitude * 1.5; // Increase for more dramatic pulses
+                
+                // Generate a random direction and distance
+                const direction = (Math.random() - 0.5) * 2; // -1 to 1
+                const movement = direction * maxMovement;
+                
+                // Calculate target, ensuring it stays within bounds
+                let target = currentSize + movement;
+                target = Math.max(minRowSizeFr, target);
+                target = Math.max(baseSize * 0.2, target); // Allow smaller sizes
+                target = Math.min(baseSize * 2.5, target); // Allow larger sizes
+                
+                this.pulseTargetRows[i] = target;
+            }
+        }
+    }
+    
+    lerp(start, end, t) {
+        return start + (end - start) * t;
+    }
+    
+    easeInOutCubic(t) {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     }
     
     smoothNoise(x) {
