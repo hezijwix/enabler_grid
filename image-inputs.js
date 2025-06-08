@@ -26,10 +26,6 @@ class ImageGridManager extends BaseGridManager {
         this.processedSequences = new Map(); // Cache entire processed sequences by mode
         this.isProcessingSequence = false;
         
-        // Video recording cache
-        this.preCalculatedFrames = [];
-        this.isPreCalculating = false;
-        
         this.setupImageUpload();
         this.setupImageSequence();
         this.setupImageFitModeDropdown();
@@ -273,10 +269,6 @@ class ImageGridManager extends BaseGridManager {
         
         // Clear image sequence
         this.clearImageSequence();
-        
-        // Clear video recording cache
-        this.preCalculatedFrames = [];
-        this.isPreCalculating = false;
         
         console.log('All images cleared - returned to empty grid');
     }
@@ -562,10 +554,6 @@ class ImageGridManager extends BaseGridManager {
         this.currentProcessedMode = null;
         this.currentProcessedIndex = 0;
         this.isProcessingSequence = false;
-        
-        // Clear video recording cache
-        this.preCalculatedFrames = [];
-        this.isPreCalculating = false;
         
         const sequenceInfo = document.getElementById('sequenceInfo');
         sequenceInfo.style.display = 'none';
@@ -1866,8 +1854,8 @@ class ImageGridManager extends BaseGridManager {
     }
     
     promptAndStartRecording() {
-        if (this.isRecording || this.isPreCalculating) {
-            console.log('Already recording or calculating');
+        if (this.isRecording) {
+            console.log('Already recording');
             return;
         }
         
@@ -1885,123 +1873,25 @@ class ImageGridManager extends BaseGridManager {
             return;
         }
         
-        // Start with frame pre-calculation
-        this.preCalculateFramesForRecording(durationSeconds);
+        this.startRecording(durationSeconds);
     }
     
-    async preCalculateFramesForRecording(duration) {
+    startRecording(duration) {
         try {
-            this.isPreCalculating = true;
-            this.preCalculatedFrames = [];
-            
-            const exportBtn = document.getElementById('exportVideoBtn');
-            exportBtn.textContent = 'Calculating...';
-            exportBtn.disabled = true;
-            
-            // Create canvas for pre-rendering
+            // Create a canvas to capture the grid area
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             
-            // Set canvas size to match grid container but with higher resolution
+            // Set canvas size to match grid container but with higher resolution for better quality
             const gridRect = this.gridContainer.getBoundingClientRect();
             const scaleFactor = 2; // 2x resolution for better quality
             canvas.width = gridRect.width * scaleFactor;
             canvas.height = gridRect.height * scaleFactor;
+            
+            // Scale the context to maintain crisp rendering at higher resolution
             ctx.scale(scaleFactor, scaleFactor);
             
-            // Calculate number of frames needed (60 FPS)
-            const frameRate = 60;
-            const totalFrames = Math.ceil(duration * frameRate);
-            const frameInterval = 1000 / frameRate; // ms per frame
-            
-            console.log(`Pre-calculating ${totalFrames} frames for ${duration}s recording...`);
-            
-            // If we have a sequence, we need to track timing
-            let sequenceFrameIndex = 0;
-            const hasSequence = this.imageSequence.length > 1 || this.currentProcessedSequence;
-            
-            // Store current animation state if any
-            const wasAnimating = this.isAnimating;
-            const originalTime = this.animationStartTime;
-            
-            // Pre-render all frames
-            for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
-                const timeStamp = frameIndex * frameInterval;
-                
-                // Update button text with progress
-                const progress = Math.round((frameIndex / totalFrames) * 100);
-                exportBtn.textContent = `Calculating... ${progress}%`;
-                
-                // If we have sequence playback, advance to correct frame
-                if (hasSequence) {
-                    // Calculate which sequence frame should be displayed at this timestamp
-                    const sequenceInterval = 1000 / 30; // 30 FPS for sequences
-                    const currentSequenceFrame = Math.floor(timeStamp / sequenceInterval);
-                    
-                    if (this.currentProcessedSequence) {
-                        // Use processed sequence
-                        const frameIdx = currentSequenceFrame % this.currentProcessedSequence.length;
-                        this.showProcessedFrame(frameIdx);
-                    } else if (this.imageSequence.length > 1) {
-                        // Use regular sequence
-                        const frameIdx = currentSequenceFrame % this.imageSequence.length;
-                        this.showSequenceImage(frameIdx);
-                    }
-                }
-                
-                // If animation is enabled, update animation state
-                if (wasAnimating) {
-                    // Simulate animation time progression
-                    this.animationStartTime = originalTime - timeStamp;
-                    this.updateAnimation();
-                }
-                
-                // Wait for any image loading to complete
-                await new Promise(resolve => setTimeout(resolve, 10));
-                
-                // Capture frame to canvas
-                this.captureGridToCanvas(canvas, ctx);
-                
-                // Store frame as ImageData for better performance
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                this.preCalculatedFrames.push({
-                    imageData: imageData,
-                    timestamp: timeStamp
-                });
-                
-                // Small delay to prevent blocking UI
-                if (frameIndex % 10 === 0) {
-                    await new Promise(resolve => setTimeout(resolve, 1));
-                }
-            }
-            
-            // Restore original animation state
-            if (wasAnimating) {
-                this.animationStartTime = originalTime;
-            }
-            
-            console.log(`Pre-calculation complete: ${this.preCalculatedFrames.length} frames ready`);
-            
-            // Start actual recording with pre-calculated frames
-            this.startRecordingWithPreCalculatedFrames(duration, canvas, scaleFactor);
-            
-        } catch (error) {
-            console.error('Error pre-calculating frames:', error);
-            this.isPreCalculating = false;
-            
-            const exportBtn = document.getElementById('exportVideoBtn');
-            exportBtn.textContent = 'Record MP4';
-            exportBtn.disabled = false;
-            
-            alert('Error pre-calculating frames. Please try again.');
-        }
-    }
-    
-    startRecordingWithPreCalculatedFrames(duration, canvas, scaleFactor) {
-        try {
-            this.isPreCalculating = false;
-            
-            // Get the stream from canvas at 60fps
+            // Get the stream from canvas at 60fps for smoother playback
             const stream = canvas.captureStream(60);
             
             // Enhanced codec selection for better compatibility
@@ -2084,67 +1974,33 @@ class ImageGridManager extends BaseGridManager {
                 this.isRecording = false;
                 exportBtn.textContent = 'Record MP4';
                 exportBtn.disabled = false;
-                
-                // Clear pre-calculated frames to free memory
-                this.preCalculatedFrames = [];
             };
             
             // Start recording
             this.mediaRecorder.start();
             
-            // Start playback of pre-calculated frames
-            this.startPreCalculatedFramePlayback(canvas);
+            // Start the canvas drawing loop at 60fps
+            this.startCanvasDrawing(canvas, ctx);
             
             // Stop recording after specified duration
             setTimeout(() => {
                 if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
                     this.mediaRecorder.stop();
-                    this.stopPreCalculatedFramePlayback();
+                    this.stopCanvasDrawing();
                 }
             }, duration * 1000);
             
-            console.log(`Started HIGH QUALITY recording with ${this.preCalculatedFrames.length} pre-calculated frames for ${duration} seconds in ${fileExtension.toUpperCase()} format at ${canvas.width}x${canvas.height} resolution`);
+            console.log(`Started HIGH QUALITY recording for ${duration} seconds in ${fileExtension.toUpperCase()} format at ${canvas.width}x${canvas.height} resolution`);
             
         } catch (error) {
-            console.error('Error starting recording with pre-calculated frames:', error);
+            console.error('Error starting recording:', error);
             alert('Error starting recording. Please try again.');
             this.isRecording = false;
-            this.isPreCalculating = false;
             
             const exportBtn = document.getElementById('exportVideoBtn');
             exportBtn.textContent = 'Record MP4';
             exportBtn.disabled = false;
         }
-    }
-    
-    startPreCalculatedFramePlayback(canvas) {
-        const ctx = canvas.getContext('2d');
-        let frameIndex = 0;
-        const frameRate = 60;
-        
-        this.preCalculatedPlaybackInterval = setInterval(() => {
-            if (frameIndex < this.preCalculatedFrames.length) {
-                const frame = this.preCalculatedFrames[frameIndex];
-                ctx.putImageData(frame.imageData, 0, 0);
-                frameIndex++;
-            } else {
-                // Loop back to beginning if we've played all frames
-                frameIndex = 0;
-            }
-        }, 1000 / frameRate);
-    }
-    
-    stopPreCalculatedFramePlayback() {
-        if (this.preCalculatedPlaybackInterval) {
-            clearInterval(this.preCalculatedPlaybackInterval);
-            this.preCalculatedPlaybackInterval = null;
-        }
-    }
-    
-    startRecording(duration) {
-        // Legacy fallback method - now redirects to pre-calculated recording
-        console.log('Using legacy recording fallback - redirecting to pre-calculated method');
-        this.preCalculateFramesForRecording(duration);
     }
     
     startCanvasDrawing(canvas, ctx) {
