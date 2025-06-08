@@ -376,7 +376,7 @@ class BaseGridManager {
             newSize = Math.max(minRowSizeFr, newSize);
             
             this.rowSizes[i] = newSize;
-            }
+        }
         } else {
             // Reset rows to base sizes when not animating Y
             this.rowSizes = [...this.baseRowSizes];
